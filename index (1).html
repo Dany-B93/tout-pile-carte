@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Tout Pile — Mode Carte V1.6</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+:root{font-family:system-ui,Arial;background:#141329;color:#fff}*{box-sizing:border-box}
+body{margin:0}.wrap{max-width:940px;margin:auto;padding:18px}h1{color:#f5cb73;margin:4px 0 8px}
+p{line-height:1.45}.muted{color:#c6c2d7}.panel{background:#24213f;border:1px solid #514a72;border-radius:18px;padding:17px;margin:14px 0}
+#map{height:min(62vh,520px);min-height:330px;border-radius:14px;z-index:0}
+button,select{font:inherit;border:0;border-radius:12px;padding:13px 17px}button{background:#f2c76b;color:#231936;font-weight:800;cursor:pointer}
+button.secondary{background:#3e385e;color:white}button:disabled{opacity:.45;cursor:not-allowed}
+.controls{display:flex;flex-wrap:wrap;gap:10px;margin-top:13px}.controls button{flex:1;min-width:150px}
+select{background:#fff;color:#1a1432;max-width:100%}.pill{display:inline-block;background:#3c365b;padding:7px 11px;border-radius:99px}
+.score{display:flex;justify-content:space-between;gap:10px;font-weight:800}.score span{color:#f5cb73}
+.hidden{display:none!important}.notice{color:#b7f4d6;font-weight:700}.error{color:#ffaab6}
+#answer{font-size:1.1rem;line-height:1.6}.foot{font-size:.86rem;color:#b9b5cc}
+</style></head><body><div class="wrap">
+<h1>🧭 Tout Pile — Mode Carte</h1><p class="muted">Prototype V1.6 • Même écran • Pays et monuments • Deux modes de carte</p>
+<div class="panel"><div class="score"><div>Équipe A : <span id="scoreA">0</span></div><div>Équipe B : <span id="scoreB">0</span></div></div>
+<p><strong id="round">Manche 1 / 10</strong> · <span id="who">Équipe A place le point</span></p>
+<p id="question"></p>
+<div><label for="difficulty">Mode : </label><select id="difficulty"><option value="easy" selected>Simple · frontières et villes</option><option value="hard">Difficile · relief sans noms ni frontières</option></select> <span class="pill" id="radius"></span></div><p class="muted" id="loadStatus" aria-live="polite"></p>
+</div>
+<div id="map" role="application" aria-label="Carte interactive pour placer un point"></div>
+<div class="panel">
+<p id="instruction">Touchez la carte pour placer votre estimation. Le cercle vert indique la zone Tout Pile pour les monuments. Pour les pays, la tolérance est calculée autour des frontières.</p>
+<div id="stage1" class="controls"><button id="confirm" disabled>Valider mon point</button></div>
+<div id="stage2" class="hidden"><p id="directionQuestion"></p><div class="controls"><button id="plus">Plus au nord</button><button id="moins">Plus au sud</button><button id="pile">Tout Pile</button></div></div>
+<div id="stage3" class="hidden"><div id="answer"></div><div class="controls"><button id="next">Question suivante</button></div></div>
+</div><p class="foot">Mode simple : OpenStreetMap avec noms et frontières. Mode difficile : relief Esri sans étiquettes ni frontières politiques dessinées (la géographie naturelle reste visible). Pour les pays, toute la surface du territoire compte, avec une zone tampon autour des frontières. Les frontières du pays recherché sont révélées après la réponse. Attribution OpenStreetMap / Esri visible sur la carte. Connexion Internet nécessaire.</p>
+</div>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/topojson-client@3/dist/topojson-client.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@turf/turf@6.5.0/turf.min.js"></script>
+<script>
+'use strict';
+const questions=[
+{name:'la tour Eiffel',lat:48.858370,lon:2.294481,zoom:8,center:[48.8566,2.3522],radius:4000,axis:'lat'},
+{name:'Japon',kind:'country',iso:'392',lat:36.20,lon:138.25,zoom:4,center:[37,129],radius:180000,axis:'lon'},
+{name:'le Colisée (le monument lui-même)',lat:41.890210,lon:12.492231,zoom:8,center:[41.9028,12.4964],radius:4500,axis:'lon'},
+{name:'Brésil',kind:'country',iso:'076',lat:-10.78,lon:-53.10,zoom:3,center:[-15,-59],radius:320000,axis:'lat'},
+{name:'la statue de la Liberté',lat:40.689249,lon:-74.044500,zoom:8,center:[40.7128,-74.0060],radius:5500,axis:'lat'},
+{name:'la France métropolitaine',kind:'country',iso:'250',lat:46.60,lon:2.20,zoom:5,center:[47,0],radius:75000,axis:'lon'},
+{name:'le Mont-Saint-Michel',lat:48.636063,lon:-1.511457,zoom:7,center:[48.68,-1.55],radius:8500,axis:'lon'},
+{name:'l’Australie',kind:'country',iso:'036',lat:-25.27,lon:133.78,zoom:4,center:[-27,139],radius:300000,axis:'lat'},
+{name:'la pyramide de Khéops',lat:29.979235,lon:31.134202,zoom:8,center:[30.0444,31.2357],radius:6000,axis:'lat'},
+{name:'l’Égypte',kind:'country',iso:'818',lat:26.82,lon:30.80,zoom:5,center:[27,34],radius:120000,axis:'lon'}
+];
+const $=id=>document.getElementById(id);
+const map=L.map('map',{worldCopyJump:false}).setView([48.8566,2.3522],8);
+// Les deux fonds sont publics et n'exigent pas de clé API.
+const osm=L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {attribution:'&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>',maxZoom:19});
+const relief=L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Shaded_Relief/MapServer/tile/{z}/{y}/{x}',{attribution:'Tiles &copy; Esri; sources: Esri, USGS, NOAA',maxZoom:13,maxNativeZoom:13});
+let activeTiles=null, countryShapes={}, countryOverlay=null, countryReady=false;
+function setTiles(){const desired=$('difficulty').value==='hard'?relief:osm;if(activeTiles!==desired){if(activeTiles)map.removeLayer(activeTiles);activeTiles=desired;activeTiles.addTo(map);activeTiles.bringToBack()}}
+async function loadCountries(){try{
+ const r=await fetch('https://cdn.jsdelivr.net/npm/world-atlas@2/countries-50m.json');if(!r.ok)throw Error('HTTP '+r.status);
+ const topo=await r.json();const features=topojson.feature(topo,topo.objects.countries).features;
+ for(const f of features)countryShapes[String(f.id).padStart(3,'0')]=f;
+ countryReady=true;$('loadStatus').textContent='Territoires chargés : les questions sur les pays sont prêtes.';
+ }catch(err){$('loadStatus').textContent='Impossible de charger les contours des pays. Vérifie ta connexion, puis recharge la page.';console.error(err)}
+ render();}
+function countryGeometry(q){return countryShapes[q.iso]}
+function nearestBoundary(q,position){
+ const f=countryGeometry(q);if(!f)return null;
+ const point=turf.point([position.lng,position.lat]);
+ let nearest=null,best=Infinity;
+ const polys=f.geometry.type==='Polygon'?[f.geometry.coordinates]:f.geometry.coordinates;
+ for(const polygon of polys){for(const ring of polygon){
+  if(ring.length<2)continue;
+  const line=turf.lineString(ring);
+  const pt=turf.nearestPointOnLine(line,point,{units:'kilometers'});
+  const dist=turf.distance(point,pt,{units:'kilometers'})*1000;
+  if(dist<best){best=dist;nearest=L.latLng(pt.geometry.coordinates[1],pt.geometry.coordinates[0])}
+ }}
+ return {nearest,distance:best,inside:turf.booleanPointInPolygon(point,f)};
+}
+setTiles();loadCountries();
+let index=0, scores=[0,0], estimate=null, marker=null, circle=null, realMarker=null, line=null, stage=1, doubled=false;
+function teamIndex(){return index%2} function estimator(){return teamIndex()} function guesser(){return 1-teamIndex()}
+function radius(){const factor={easy:1,hard:0.25}[$('difficulty').value];return Math.round(questions[index].radius*factor)}
+function removeLayers(){[marker,circle,realMarker,line].forEach(x=>{if(x)map.removeLayer(x)});marker=circle=realMarker=line=null;if(countryOverlay){map.removeLayer(countryOverlay);countryOverlay=null}}
+function setStage(n){stage=n;['stage1','stage2','stage3'].forEach((id,i)=>$(id).classList.toggle('hidden',i+1!==n));$('difficulty').disabled=n!==1}
+function redrawEstimate(latlng){estimate=latlng;if(marker)marker.setLatLng(latlng);else marker=L.marker(latlng,{draggable:true}).addTo(map).bindPopup('Votre estimation');if(questions[index].kind!=='country'){if(circle)circle.setLatLng(latlng).setRadius(radius());else circle=L.circle(latlng,{radius:radius(),color:'#1da98d',weight:3,fillColor:'#1da98d',fillOpacity:.17}).addTo(map)};marker.off('drag').on('drag',e=>{estimate=e.target.getLatLng();circle.setLatLng(estimate)});$('confirm').disabled=questions[index].kind==='country'&&!countryReady}
+function refreshRadius(){$('radius').textContent=(radius()>=1000?(radius()/1000).toLocaleString('fr-FR')+' km':radius().toLocaleString('fr-FR')+' m');if(circle)circle.setRadius(radius())}
+function render(){setTiles();removeLayers();estimate=null;setStage(1);$('confirm').disabled=questions[index].kind==='country'&&!countryReady;$('scoreA').textContent=scores[0];$('scoreB').textContent=scores[1];$('round').textContent='Manche '+(index+1)+' / '+questions.length+(doubled?' · ×2':'');$('who').textContent='Équipe '+(estimator()===0?'A':'B')+' place le point';$('question').textContent='Où se trouve '+questions[index].name+' ?';$('instruction').textContent='Équipe '+(estimator()===0?'A':'B')+' : touchez la carte pour placer votre estimation. '+(questions[index].kind==='country'?'Pour un pays, toute la surface du territoire est valable, ainsi que la marge autour des frontières. Les frontières seront révélées après la réponse.':'La zone verte indique la tolérance autour de votre point.');map.setView(questions[index].center,questions[index].zoom);refreshRadius();setTimeout(()=>map.invalidateSize(),50)}
+map.on('click',e=>{if(stage===1 && (questions[index].kind!=='country'||countryReady))redrawEstimate(e.latlng)});
+$('difficulty').addEventListener('change',()=>{setTiles();refreshRadius()});
+$('confirm').addEventListener('click',()=>{if(!estimate)return;marker.dragging.disable();setStage(2);const q=questions[index];$('who').textContent='Équipe '+(guesser()===0?'A':'B')+' répond';const axis=q.axis==='lat'?'nord ou au sud':'est ou à l’ouest';$('directionQuestion').textContent='Le lieu réel est-il plus au '+axis+' que le point placé ? Ou est-il dans le cercle Tout Pile ?';$('plus').textContent=q.axis==='lat'?'Plus au nord':'Plus à l’est';$('moins').textContent=q.axis==='lat'?'Plus au sud':'Plus à l’ouest';$('instruction').textContent='Équipe '+(guesser()===0?'A':'B')+' : choisissez une réponse.'});
+function resolve(choice){
+ if(stage!==2)return;
+ const q=questions[index],isCountry=q.kind==='country',actual=L.latLng(q.lat,q.lon);
+ const border=isCountry?nearestBoundary(q,estimate):null;
+ if(isCountry&&!border){$('loadStatus').textContent='Contours indisponibles : recharge la page.';return}
+ const target=isCountry?border.nearest:actual;
+ const dist=isCountry?(border.inside?0:border.distance):estimate.distanceTo(actual);
+ const inside=isCountry?(border.inside||dist<=radius()):(dist<=radius());
+ const delta=q.axis==='lat'?target.lat-estimate.lat:((target.lng-estimate.lng+540)%360)-180;
+ const correct=inside?'pile':delta>=0?'plus':'moins';
+ const success=choice===correct;
+ let winner=null,points=0;
+ const nextDouble=inside&&choice==='pile';
+ if(!nextDouble){winner=success?guesser():estimator();points=doubled?2:1;scores[winner]+=points}
+ if(isCountry){countryOverlay=L.geoJSON(countryGeometry(q),{style:{color:'#e74c6b',weight:2.5,fillColor:'#e74c6b',fillOpacity:.18},interactive:false}).addTo(map)}
+ else{realMarker=L.circleMarker(actual,{radius:9,color:'#e74c6b',fillColor:'#e74c6b',fillOpacity:1}).addTo(map).bindPopup('Emplacement réel : '+q.name).openPopup();line=L.polyline([estimate,actual],{color:'#e74c6b',weight:3,dashArray:'5 7'}).addTo(map)}
+ if(isCountry){const bounds=countryOverlay.getBounds();bounds.extend(estimate);map.fitBounds(bounds.pad(.12),{maxZoom:7})}
+ else map.fitBounds(L.latLngBounds([estimate,actual]).pad(.55),{maxZoom:15});
+ setStage(3);$('scoreA').textContent=scores[0];$('scoreB').textContent=scores[1];$('who').textContent='Résultat';
+ const correctText=correct==='pile'?'Tout Pile':correct==='plus'?(q.axis==='lat'?'Plus au nord':'Plus à l’est'):(q.axis==='lat'?'Plus au sud':'Plus à l’ouest');
+ const distanceText=isCountry?(border.inside?'Épingle dans le pays':Math.round(dist/1000).toLocaleString('fr-FR')+' km de la frontière'):Math.round(dist).toLocaleString('fr-FR')+' m';
+ $('answer').innerHTML=(success?'✅ Bonne réponse !':'❌ Mauvaise réponse.')+'<p>Bonne réponse : <strong>'+correctText+'</strong><br>'+(isCountry?'Position : ':'Distance entre les points : ')+'<strong>'+distanceText+'</strong><br>Zone Tout Pile : <strong>'+radius().toLocaleString('fr-FR')+' m</strong><br>'+(nextDouble?'🎯 Tout Pile ! La prochaine manche sera doublée.':winner===null?'':('Équipe '+(winner===0?'A':'B')+' : +'+points+' point'+(points>1?'s':'')))+'</p>';
+ $('instruction').textContent=isCountry?'Le territoire du pays est maintenant affiché en rouge.':'Le point rouge indique le lieu réel.';
+ doubled=nextDouble;$('next').textContent=index===questions.length-1?'Rejouer':'Question suivante'
+}
+$('plus').addEventListener('click',()=>resolve('plus'));$('moins').addEventListener('click',()=>resolve('moins'));$('pile').addEventListener('click',()=>resolve('pile'));
+$('next').addEventListener('click',()=>{if(index===questions.length-1){index=0;scores=[0,0];doubled=false}else index++;render()});
+render();
+</script></body></html>
