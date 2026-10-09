@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Tout Pile — Prototype Carte V1.1</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+:root{font-family:system-ui,Arial;background:#141329;color:#fff}*{box-sizing:border-box}
+body{margin:0}.wrap{max-width:940px;margin:auto;padding:18px}h1{color:#f5cb73;margin:4px 0 8px}
+p{line-height:1.45}.muted{color:#c6c2d7}.panel{background:#24213f;border:1px solid #514a72;border-radius:18px;padding:17px;margin:14px 0}
+#map{height:min(62vh,520px);min-height:330px;border-radius:14px;z-index:0}
+button,select{font:inherit;border:0;border-radius:12px;padding:13px 17px}button{background:#f2c76b;color:#231936;font-weight:800;cursor:pointer}
+button.secondary{background:#3e385e;color:white}button:disabled{opacity:.45;cursor:not-allowed}
+.controls{display:flex;flex-wrap:wrap;gap:10px;margin-top:13px}.controls button{flex:1;min-width:150px}
+select{background:#fff;color:#1a1432;max-width:100%}.pill{display:inline-block;background:#3c365b;padding:7px 11px;border-radius:99px}
+.score{display:flex;justify-content:space-between;gap:10px;font-weight:800}.score span{color:#f5cb73}
+.hidden{display:none!important}.notice{color:#b7f4d6;font-weight:700}.error{color:#ffaab6}
+#answer{font-size:1.1rem;line-height:1.6}.foot{font-size:.86rem;color:#b9b5cc}
+</style></head><body><div class="wrap">
+<h1>🧭 Tout Pile — Mode Carte</h1><p class="muted">Prototype V1.2 • Même écran • Pays et monuments • Carte sans noms</p>
+<div class="panel"><div class="score"><div>Équipe A : <span id="scoreA">0</span></div><div>Équipe B : <span id="scoreB">0</span></div></div>
+<p><strong id="round">Manche 1 / 10</strong> · <span id="who">Équipe A place le point</span></p>
+<p id="question"></p>
+<div><label for="difficulty">Tolérance : </label><select id="difficulty"><option value="easy">Facile (large)</option><option value="medium" selected>Moyenne</option><option value="hard">Difficile (petite)</option></select> <span class="pill" id="radius"></span></div>
+</div>
+<div id="map" role="application" aria-label="Carte interactive pour placer un point"></div>
+<div class="panel">
+<p id="instruction">Touchez la carte pour placer votre estimation. Le cercle vert indique la zone Tout Pile.</p>
+<div id="stage1" class="controls"><button id="confirm" disabled>Valider mon point</button></div>
+<div id="stage2" class="hidden"><p id="directionQuestion"></p><div class="controls"><button id="plus">Plus au nord</button><button id="moins">Plus au sud</button><button id="pile">Tout Pile</button></div></div>
+<div id="stage3" class="hidden"><div id="answer"></div><div class="controls"><button id="next">Question suivante</button></div></div>
+</div><p class="foot">Fond de carte dessiné sans noms, basé sur les données OpenStreetMap (CARTO). Si les fonds sans noms sont indisponibles, OpenStreetMap standard avec noms apparaît en dernier secours. Les crédits restent visibles en bas de la carte. Connexion Internet nécessaire pour charger la carte. Le cercle est calculé en mètres. Dans ce prototype, les points suivent la règle classique : bonne direction = 1 point au joueur 2 ; mauvaise direction = 1 point au joueur 1 ; Tout Pile réussi = 0 point et prochaine manche doublée. Si la position est dans le cercle, choisir une direction est incorrect.</p>
+</div>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+'use strict';
+const questions=[
+{name:'la tour Eiffel',lat:48.858370,lon:2.294481,zoom:8,center:[48.8566,2.3522],radius:4000,axis:'lat'},
+{name:'le centre approximatif du Japon',lat:36.20,lon:138.25,zoom:4,center:[37,129],radius:180000,axis:'lon'},
+{name:'le Colisée (le monument lui-même)',lat:41.890210,lon:12.492231,zoom:8,center:[41.9028,12.4964],radius:4500,axis:'lon'},
+{name:'le centre approximatif du Brésil',lat:-10.78,lon:-53.10,zoom:3,center:[-15,-59],radius:320000,axis:'lat'},
+{name:'la statue de la Liberté',lat:40.689249,lon:-74.044500,zoom:8,center:[40.7128,-74.0060],radius:5500,axis:'lat'},
+{name:'le centre approximatif de la France métropolitaine',lat:46.60,lon:2.20,zoom:5,center:[47,0],radius:75000,axis:'lon'},
+{name:'le Mont-Saint-Michel',lat:48.636063,lon:-1.511457,zoom:7,center:[48.68,-1.55],radius:8500,axis:'lon'},
+{name:'le centre approximatif de l’Australie',lat:-25.27,lon:133.78,zoom:4,center:[-27,139],radius:300000,axis:'lat'},
+{name:'la pyramide de Khéops',lat:29.979235,lon:31.134202,zoom:8,center:[30.0444,31.2357],radius:6000,axis:'lat'},
+{name:'le centre approximatif de l’Égypte',lat:26.82,lon:30.80,zoom:5,center:[27,34],radius:120000,axis:'lon'}
+];
+const $=id=>document.getElementById(id);
+const map=L.map('map',{worldCopyJump:false}).setView([48.8566,2.3522],8);
+// Fonds CARTO sans étiquettes fondés sur OpenStreetMap, puis OSM standard en dernier recours.
+const basemaps=[
+ {url:'https://basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png',options:{attribution:'&copy; OpenStreetMap contributors &copy; CARTO',maxZoom:19,subdomains:'abcd'}},
+ {url:'https://basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png',options:{attribution:'&copy; OpenStreetMap contributors &copy; CARTO',maxZoom:19,subdomains:'abcd'}},
+ {url:'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',options:{attribution:'&copy; OpenStreetMap contributors',maxZoom:19}}
+];
+let activeBasemap=null,basemapIndex=0,errors=0;
+function loadBasemap(index){
+ if(activeBasemap)map.removeLayer(activeBasemap);
+ basemapIndex=index;errors=0;
+ activeBasemap=L.tileLayer(basemaps[index].url,basemaps[index].options).addTo(map);
+ activeBasemap.on('tileerror',()=>{
+  errors++;
+  if(errors>=3&&basemapIndex+1<basemaps.length){loadBasemap(basemapIndex+1)}
+  else if(errors===3&&basemapIndex===basemaps.length-1){
+   $('instruction').textContent='Les fonds de carte sont indisponibles. Vérifie la connexion ou réessaie plus tard.';
+  }
+ });
+}
+loadBasemap(0);
+let index=0, scores=[0,0], estimate=null, marker=null, circle=null, realMarker=null, line=null, stage=1, doubled=false;
+function teamIndex(){return index%2} function estimator(){return teamIndex()} function guesser(){return 1-teamIndex()}
+function radius(){const factor={easy:2.5,medium:1,hard:0.4}[$('difficulty').value];return Math.round(questions[index].radius*factor)}
+function removeLayers(){[marker,circle,realMarker,line].forEach(x=>{if(x)map.removeLayer(x)});marker=circle=realMarker=line=null}
+function setStage(n){stage=n;['stage1','stage2','stage3'].forEach((id,i)=>$(id).classList.toggle('hidden',i+1!==n));$('difficulty').disabled=n!==1}
+function redrawEstimate(latlng){estimate=latlng;if(marker)marker.setLatLng(latlng);else marker=L.marker(latlng,{draggable:true}).addTo(map).bindPopup('Votre estimation');if(circle)circle.setLatLng(latlng).setRadius(radius());else circle=L.circle(latlng,{radius:radius(),color:'#1da98d',weight:3,fillColor:'#1da98d',fillOpacity:.17}).addTo(map);marker.off('drag').on('drag',e=>{estimate=e.target.getLatLng();circle.setLatLng(estimate)});$('confirm').disabled=false}
+function refreshRadius(){$('radius').textContent=(radius()>=1000?(radius()/1000).toLocaleString('fr-FR')+' km':radius().toLocaleString('fr-FR')+' m');if(circle)circle.setRadius(radius())}
+function render(){removeLayers();estimate=null;setStage(1);$('confirm').disabled=true;$('scoreA').textContent=scores[0];$('scoreB').textContent=scores[1];$('round').textContent='Manche '+(index+1)+' / '+questions.length+(doubled?' · ×2':'');$('who').textContent='Équipe '+(estimator()===0?'A':'B')+' place le point';$('question').textContent='Où se trouve '+questions[index].name+' ?';$('instruction').textContent='Équipe '+(estimator()===0?'A':'B')+' : touchez la carte pour placer votre estimation. La zone verte est visible pendant votre choix.';map.setView(questions[index].center,questions[index].zoom);refreshRadius();setTimeout(()=>map.invalidateSize(),50)}
+map.on('click',e=>{if(stage===1)redrawEstimate(e.latlng)});
+$('difficulty').addEventListener('change',refreshRadius);
+$('confirm').addEventListener('click',()=>{if(!estimate)return;marker.dragging.disable();setStage(2);const q=questions[index];$('who').textContent='Équipe '+(guesser()===0?'A':'B')+' répond';const axis=q.axis==='lat'?'nord ou au sud':'est ou à l’ouest';$('directionQuestion').textContent='Le lieu réel est-il plus au '+axis+' que le point placé ? Ou est-il dans le cercle Tout Pile ?';$('plus').textContent=q.axis==='lat'?'Plus au nord':'Plus à l’est';$('moins').textContent=q.axis==='lat'?'Plus au sud':'Plus à l’ouest';$('instruction').textContent='Équipe '+(guesser()===0?'A':'B')+' : choisissez une réponse.'});
+function resolve(choice){if(stage!==2)return;const q=questions[index],actual=L.latLng(q.lat,q.lon),dist=estimate.distanceTo(actual),inside=dist<=radius();const delta=q.axis==='lat'?q.lat-estimate.lat:((q.lon-estimate.lng+540)%360)-180;const correct=inside?'pile':delta>0?'plus':'moins';const success=choice===correct;let winner=null,points=0;const nextDouble=inside&&choice==='pile';if(!nextDouble){winner=success?guesser():estimator();points=doubled?2:1;scores[winner]+=points}realMarker=L.circleMarker(actual,{radius:9,color:'#e74c6b',fillColor:'#e74c6b',fillOpacity:1}).addTo(map).bindPopup('Emplacement réel : '+q.name).openPopup();line=L.polyline([estimate,actual],{color:'#e74c6b',weight:3,dashArray:'5 7'}).addTo(map);map.fitBounds(L.latLngBounds([estimate,actual]).pad(.55),{maxZoom:15});setStage(3);$('scoreA').textContent=scores[0];$('scoreB').textContent=scores[1];$('who').textContent='Résultat';const correctText=correct==='pile'?'Tout Pile':correct==='plus'?(q.axis==='lat'?'Plus au nord':'Plus à l’est'):(q.axis==='lat'?'Plus au sud':'Plus à l’ouest');$('answer').innerHTML=(success?'✅ Bonne réponse !':'❌ Mauvaise réponse.')+'<p>Bonne réponse : <strong>'+correctText+'</strong><br>Distance entre les points : <strong>'+Math.round(dist).toLocaleString('fr-FR')+' m</strong><br>Zone Tout Pile : <strong>'+radius().toLocaleString('fr-FR')+' m</strong><br>'+(nextDouble?'🎯 Tout Pile ! La prochaine manche sera doublée.':winner===null?'':('Équipe '+(winner===0?'A':'B')+' : +'+points+' point'+(points>1?'s':'')))+'</p>';$('instruction').textContent='Le point rouge indique le lieu réel. La ligne relie les deux positions.';doubled=nextDouble;$('next').textContent=index===questions.length-1?'Rejouer':'Question suivante'}
+$('plus').addEventListener('click',()=>resolve('plus'));$('moins').addEventListener('click',()=>resolve('moins'));$('pile').addEventListener('click',()=>resolve('pile'));
+$('next').addEventListener('click',()=>{if(index===questions.length-1){index=0;scores=[0,0];doubled=false}else index++;render()});
+render();
+</script></body></html>
