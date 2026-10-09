@@ -46,26 +46,12 @@ const questions=[
 ];
 const $=id=>document.getElementById(id);
 const map=L.map('map',{worldCopyJump:false}).setView([48.8566,2.3522],8);
-// Fonds CARTO sans étiquettes fondés sur OpenStreetMap, puis OSM standard en dernier recours.
-const basemaps=[
- {url:'https://basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png',options:{attribution:'&copy; OpenStreetMap contributors &copy; CARTO',maxZoom:19,subdomains:'abcd'}},
- {url:'https://basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png',options:{attribution:'&copy; OpenStreetMap contributors &copy; CARTO',maxZoom:19,subdomains:'abcd'}},
- {url:'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',options:{attribution:'&copy; OpenStreetMap contributors',maxZoom:19}}
-];
-let activeBasemap=null,basemapIndex=0,errors=0;
-function loadBasemap(index){
- if(activeBasemap)map.removeLayer(activeBasemap);
- basemapIndex=index;errors=0;
- activeBasemap=L.tileLayer(basemaps[index].url,basemaps[index].options).addTo(map);
- activeBasemap.on('tileerror',()=>{
-  errors++;
-  if(errors>=3&&basemapIndex+1<basemaps.length){loadBasemap(basemapIndex+1)}
-  else if(errors===3&&basemapIndex===basemaps.length-1){
-   $('instruction').textContent='Les fonds de carte sont indisponibles. Vérifie la connexion ou réessaie plus tard.';
-  }
- });
-}
-loadBasemap(0);
+// Fond OpenStreetMap classique, sans clé API.
+// Les noms sont intégrés aux images et ne peuvent pas être masqués ici.
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  attribution:'&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>',
+  maxZoom:19
+}).addTo(map);
 let index=0, scores=[0,0], estimate=null, marker=null, circle=null, realMarker=null, line=null, stage=1, doubled=false;
 function teamIndex(){return index%2} function estimator(){return teamIndex()} function guesser(){return 1-teamIndex()}
 function radius(){const factor={easy:2.5,medium:1,hard:0.4}[$('difficulty').value];return Math.round(questions[index].radius*factor)}
